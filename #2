@@ -1,0 +1,56 @@
+Field-Service-Pro/
+├── package.json
+├── .env.example
+├── Dockerfile
+├── next.config.js
+├── tailwind.config.js
+├── postcss.config.js
+├── tsconfig.json
+├── .github/
+│   └── workflows/
+│       └── deploy.yml
+├── prisma/
+│   └── schema.prisma
+├── src/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── auth/
+│   │   │   │   └── [...nextauth]/
+│   │   │   │       └── route.ts
+│   │   │   ├── ai/
+│   │   │   │   └── analyze/
+│   │   │   │       └── route.ts
+│   │   │   ├── assignments/
+│   │   │   │   └── route.ts
+│   │   │   ├── crew/
+│   │   │   │   └── route.ts
+│   │   │   ├── dashboard/
+│   │   │   │   └── route.ts
+│   │   │   ├── estimates/
+│   │   │   │   └── route.ts
+│   │   │   ├── leads/
+│   │   │   │   └── route.ts
+│   │   │   └── upload/
+│   │   │       └── route.ts
+│   │   ├── (app)/
+│   │   │   ├── dashboard/
+│   │   │   │   └── page.tsx
+│   │   │   ├── ai/
+│   │   │   │   └── page.tsx
+│   │   │   ├── estimates/
+│   │   │   │   └── page.tsx
+│   │   │   ├── leads/
+│   │   │   │   └── page.tsx
+│   │   │   ├── schedule/
+│   │   │   │   └── page.tsx
+│   │   │   ├── layout.tsx
+│   │   │   └── globals.css
+│   │   └── layout.tsx
+│   ├── components/
+│   │   ├── Navigation.tsx
+│   │   └── Providers.tsx
+│   └── lib/
+│       ├── prisma.ts
+│       └── auth.ts
+└── public/
+

@@ -1,0 +1,1429 @@
+{
+  "name": "field-service-pro",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "next": "14.0.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "next-auth": "^4.24.5",
+    "@prisma/client": "^5.7.0",
+    "@auth/prisma-adapter": "^1.0.12",
+    "bcryptjs": "^2.4.3",
+    "stripe": "^14.9.0",
+    "@stripe/stripe-js": "^2.2.2",
+    "@stripe/react-stripe-js": "^2.4.0",
+    "resend": "^2.0.0",
+    "zod": "^3.22.4",
+    "react-hook-form": "^7.49.2",
+    "@hookform/resolvers": "^3.3.3",
+    "clsx": "^2.0.0",
+    "tailwind-merge": "^2.2.0",
+    "framer-motion": "^10.16.16",
+    "lucide-react": "^0.303.0",
+    "date-fns": "^3.0.6",
+    "recharts": "^2.10.3",
+    "@tanstack/react-query": "^5.17.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.10.5",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@types/bcryptjs": "^2.4.6",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "prisma": "^5.7.0",
+    "tailwindcss": "^3.4.0",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "14.0.4"
+  }
+}
+# Database
+DATABASE_URL="postgresql://postgres:password@localhost:5432/field_service_pro"
+
+# NextAuth
+NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_SECRET="your-super-secret-key-min-32-chars-long"
+
+# OAuth (optional)
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+
+# Stripe
+STRIPE_PUBLISHABLE_KEY="pk_test_..."
+STRIPE_SECRET_KEY="sk_test_..."
+
+# Email
+RESEND_API_KEY="re_..."
+
+# AI
+OPENAI_API_KEY="sk-..."
+
+FROM node:18-alpine AS base
+FROM base AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+FROM base AS runner
+WORKDIR /app
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+COPY --from=builder /app/public ./public
+RUN mkdir .next && chown nextjs:nodejs .next
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+USER nextjs
+EXPOSE 3000
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
+CMD ["node", "server.js"]
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  output: 'standalone',
+  experimental: {
+    appDir: true,
+  },
+  images: {
+    domains: ['localhost', 'picsum.photos'],
+  },
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-DNS-Prefetch-Control', value: 'on' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'origin-when-cross-origin' },
+        ],
+      },
+    ]
+  },
+}
+
+module.exports = nextConfig
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/components/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          green: '#22c55e',
+          emerald: '#10b981',
+          orange: '#f97316',
+        }
+      },
+    },
+  },
+  plugins: [],
+}
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+{
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - uses: azure/container-apps-deploy-action@v1
+        with:
+          imageToDeploy: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          containerAppName: field-service-pro
+          resourceGroup: field-service-rg
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  accounts      Account[]
+  sessions      Session[]
+  companyName   String?
+  phone         String?
+  subscription  Subscription?
+  leads         Lead[]
+  estimates     Estimate[]
+  assignments   Assignment[]
+  crewMembers   CrewMember[]
+  aiAnalyses    AIAnalysis[]
+  settings      Json      @default("{}")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@unique([identifier, token])
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tier      Tier     @default(FREE)
+  status    SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  stripeSubscriptionId String?
+  stripeCustomerId     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum Tier { FREE, MODERATO, ALLEGRETTO, VIVACE }
+enum SubscriptionStatus { ACTIVE, CANCELED, PAST_DUE, UNPAID }
+
+model Lead {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  email       String?
+  phone       String?
+  address     String
+  source      LeadSource @default(MANUAL)
+  serviceType String
+  budgetMin   Int?
+  budgetMax   Int?
+  status      LeadStatus @default(NEW)
+  priority    Priority   @default(MEDIUM)
+  notes       Note[]
+  estimates   Estimate[]
+  aiAnalysis  AIAnalysis? @relation(fields: [aiAnalysisId], references: [id])
+  aiAnalysisId String?    @unique
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  @@index([userId])
+  @@index([status])
+}
+
+enum LeadSource { AI_ANALYSIS, WEBSITE, REFERRAL, MANUAL, GOOGLE, FACEBOOK, INSTAGRAM }
+enum LeadStatus { NEW, CONTACTED, QUOTED, NEGOTIATING, WON, LOST, COLD }
+enum Priority { LOW, MEDIUM, HIGH, URGENT }
+
+model Note {
+  id        String   @id @default(cuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  content   String
+  type      NoteType @default(INTERNAL)
+  createdBy String
+  createdAt DateTime @default(now())
+}
+
+enum NoteType { CALL, EMAIL, MEETING, INTERNAL }
+
+model AIAnalysis {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address     String
+  lat         Float
+  lng         Float
+  lotSizeSqFt     Int
+  lawnAreaSqFt    Int
+  slope           Slope
+  slopePercentage Float?
+  obstacles       Json
+  sunExposure     SunExposure
+  estimatedHours  Float
+  suggestedPrice  Int
+  confidence      Int
+  satelliteImageUrl String?
+  lead        Lead?
+  estimate    Estimate?
+  createdAt   DateTime @default(now())
+  @@index([userId])
+}
+
+enum Slope { FLAT, GENTLE, MODERATE, STEEP }
+enum SunExposure { FULL, PARTIAL, SHADE }
+
+model Estimate {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  clientName  String
+  clientEmail String?
+  address     String
+  lineItems   LineItem[]
+  subtotal    Int
+  taxRate     Float    @default(0)
+  taxAmount   Int      @default(0)
+  total       Int
+  status      EstimateStatus @default(DRAFT)
+  validUntil  DateTime
+  aiGenerated     Boolean  @default(false)
+  aiAnalysisId    String?  @unique
+  aiAnalysis      AIAnalysis? @relation(fields: [aiAnalysisId], references: [id])
+  assignments Assignment[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([userId])
+  @@index([leadId])
+  @@index([status])
+}
+
+model LineItem {
+  id          String   @id @default(cuid())
+  estimateId  String
+  estimate    Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  category    LineItemCategory
+  description String
+  quantity    Float
+  unit        Unit
+  costPerUnit Int
+  pricePerUnit Int
+  markup      Float
+  @@index([estimateId])
+}
+
+enum LineItemCategory { LABOR, MATERIALS, EQUIPMENT, SUBCONTRACTOR, OTHER }
+enum Unit { HOUR, DAY, SQ_FT, EACH, YARD, LINEAR_FT }
+enum EstimateStatus { DRAFT, SENT, VIEWED, APPROVED, REJECTED, EXPIRED }
+
+model CrewMember {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  email       String?
+  phone       String
+  role        CrewRole @default(LABORER)
+  hourlyRate  Int      @default(25)
+  color       String   @default("#22c55e")
+  assignments Assignment[]
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  @@index([userId])
+}
+
+enum CrewRole { OWNER, MANAGER, LEAD, LABORER, DRIVER }
+
+model Assignment {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  estimateId  String
+  estimate    Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  scheduledDate   DateTime
+  startTime       DateTime?
+  endTime         DateTime?
+  estimatedHours  Float
+  status      AssignmentStatus @default(SCHEDULED)
+  address     String
+  lat         Float?
+  lng         Float?
+  photos      Photo[]
+  notes       String?
+  checklist   Json?
+  crewMembers CrewMember[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([userId])
+  @@index([scheduledDate])
+  @@index([status])
+}
+
+enum AssignmentStatus { SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED, DELAYED }
+
+model Photo {
+  id          String   @id @default(cuid())
+  assignmentId String
+  assignment  Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  url         String
+  thumbnailUrl String?
+  caption     String?
+  takenAt     DateTime @default(now())
+  takenBy     String
+  lat         Float?
+  lng         Float?
+  type        PhotoType @default(PROGRESS)
+  createdAt   DateTime @default(now())
+  @@index([assignmentId])
+}
+
+enum PhotoType { BEFORE, PROGRESS, AFTER, ISSUE, DOCUMENT }
+import { PrismaClient } from '@prisma/client'
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined
+}
+
+export const prisma = globalForPrisma.prisma ?? new PrismaClient()
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+import { NextAuthOptions } from 'next-auth'
+import { PrismaAdapter } from '@auth/prisma-adapter'
+import CredentialsProvider from 'next-auth/providers/credentials'
+import bcrypt from 'bcryptjs'
+import { prisma } from './prisma'
+
+export const authOptions: NextAuthOptions = {
+  adapter: PrismaAdapter(prisma),
+  providers: [
+    CredentialsProvider({
+      name: 'credentials',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' }
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) return null
+        const user = await prisma.user.findUnique({
+          where: { email: credentials.email }
+        })
+        if (!user || !user.password) return null
+        const isValid = await bcrypt.compare(credentials.password, user.password)
+        if (!isValid) return null
+        return { id: user.id, email: user.email, name: user.name }
+      }
+    })
+  ],
+  session: { strategy: 'jwt' },
+  pages: { signIn: '/auth/signin' }
+}
+import NextAuth from 'next-auth'
+import { authOptions } from '@/lib/auth'
+
+const handler = NextAuth(authOptions)
+export { handler as GET, handler as POST }
+import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+
+const MOCK_RESULTS: Record<string, any> = {
+  '1234 oak street, springfield, il': {
+    address: '1234 Oak Street, Springfield, IL 62701',
+    lotSizeSqFt: 20473,
+    lawnAreaSqFt: 12400,
+    slope: 'moderate',
+    slopePercentage: 8,
+    obstacles: ['Large oak tree', 'Retaining wall'],
+    estimatedHours: 2.5,
+    suggestedPrice: 185,
+    confidence: 87
+  }
+}
+
+export async function POST(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { address } = await req.json()
+  await new Promise(r => setTimeout(r, 2000))
+  
+  const normalized = address.toLowerCase().trim()
+  const result = MOCK_RESULTS[normalized] || {
+    address,
+    lotSizeSqFt: Math.floor(Math.random() * 15000) + 5000,
+    lawnAreaSqFt: Math.floor(Math.random() * 10000) + 3000,
+    slope: ['flat', 'gentle', 'moderate'][Math.floor(Math.random() * 3)],
+    slopePercentage: Math.floor(Math.random() * 15),
+    obstacles: Math.random() > 0.5 ? ['Tree', 'Fence'] : [],
+    estimatedHours: Math.floor(Math.random() * 4) + 1,
+    suggestedPrice: Math.floor(Math.random() * 200) + 100,
+    confidence: Math.floor(Math.random() * 20) + 75
+  }
+
+  return NextResponse.json(result)
+}
+import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
+
+export async function GET() {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const leads = await prisma.lead.findMany({
+    where: { userId: session.user.id },
+    orderBy: { createdAt: 'desc' },
+    include: { aiAnalysis: true }
+  })
+
+  return NextResponse.json(leads)
+}
+
+export async function POST(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const data = await req.json()
+
+  const aiAnalysis = data.aiAnalysis ? await prisma.aIAnalysis.create({
+    data: {
+      userId: session.user.id,
+      address: data.aiAnalysis.address,
+      lat: 39.7817,
+      lng: -89.6501,
+      lotSizeSqFt: data.aiAnalysis.lotSizeSqFt,
+      lawnAreaSqFt: data.aiAnalysis.lawnAreaSqFt,
+      slope: data.aiAnalysis.slope.toUpperCase(),
+      slopePercentage: data.aiAnalysis.slopePercentage,
+      obstacles: data.aiAnalysis.obstacles,
+      sunExposure: 'FULL',
+      estimatedHours: data.aiAnalysis.estimatedHours,
+      suggestedPrice: data.aiAnalysis.suggestedPrice,
+      confidence: data.aiAnalysis.confidence
+    }
+  }) : null
+
+  const lead = await prisma.lead.create({
+    data: {
+      userId: session.user.id,
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      address: data.address,
+      source: 'AI_ANALYSIS',
+      serviceType: 'Lawn Maintenance',
+      budgetMin: Math.floor(data.aiAnalysis?.suggestedPrice * 0.8),
+      budgetMax: Math.floor(data.aiAnalysis?.suggestedPrice * 1.3),
+      status: 'NEW',
+      aiAnalysisId: aiAnalysis?.id
+    }
+  })
+
+  const estimate = await prisma.estimate.create({
+    data: {
+      userId: session.user.id,
+      leadId: lead.id,
+      clientName: data.name,
+      clientEmail: data.email,
+      address: data.address,
+      lineItems: {
+        create: [
+          {
+            category: 'LABOR',
+            description: `Lawn Maintenance - ${data.aiAnalysis?.lawnAreaSqFt?.toLocaleString()} sq ft`,
+            quantity: data.aiAnalysis?.estimatedHours || 2,
+            unit: 'HOUR',
+            costPerUnit: 35,
+            pricePerUnit: 60,
+            markup: 71
+          },
+          {
+            category: 'OTHER',
+            description: `Obstacle surcharge (${data.aiAnalysis?.obstacles?.length || 0} items)`,
+            quantity: 1,
+            unit: 'EACH',
+            costPerUnit: 25,
+            pricePerUnit: 45,
+            markup: 80
+          }
+        ]
+      },
+      subtotal: data.aiAnalysis?.suggestedPrice || 150,
+      taxRate: 0,
+      taxAmount: 0,
+      total: data.aiAnalysis?.suggestedPrice || 150,
+      status: 'DRAFT',
+      validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      aiGenerated: true,
+      aiAnalysisId: aiAnalysis?.id
+    }
+  })
+
+  return NextResponse.json({ lead, estimate })
+}
+import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
+
+export async function GET() {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const estimates = await prisma.estimate.findMany({
+    where: { userId: session.user.id },
+    orderBy: { createdAt: 'desc' },
+    include: { lead: true, lineItems: true }
+  })
+
+  return NextResponse.json(estimates)
+}
+import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
+
+export async function GET(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { searchParams } = new URL(req.url)
+  const start = searchParams.get('start')
+  const end = searchParams.get('end')
+
+  const assignments = await prisma.assignment.findMany({
+    where: {
+      userId: session.user.id,
+      scheduledDate: {
+        gte: start ? new Date(start) : undefined,
+        lte: end ? new Date(end) : undefined
+      }
+    },
+    include: {
+      estimate: { include: { lead: true } },
+      crewMembers: true,
+      photos: true
+    },
+    orderBy: { scheduledDate: 'asc' }
+  })
+
+  return NextResponse.json(assignments)
+}
+
+export async function POST(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const data = await req.json()
+
+  const assignment = await prisma.assignment.create({
+    data: {
+      userId: session.user.id,
+      estimateId: data.estimateId,
+      scheduledDate: new Date(data.scheduledDate),
+      startTime: data.startTime ? new Date(data.startTime) : null,
+      estimatedHours: data.estimatedHours,
+      address: data.address,
+      lat: data.lat,
+      lng: data.lng,
+      notes: data.notes,
+      checklist: data.checklist || [],
+      crewMembers: { connect: data.crewMemberIds.map((id: string) => ({ id })) }
+    },
+    include: { estimate: true, crewMembers: true }
+  })
+
+  return NextResponse.json(assignment)
+}
+
+export async function PATCH(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const data = await req.json()
+  const { id, ...updates } = data
+
+  const assignment = await prisma.assignment.update({
+    where: { id },
+    data: {
+      ...updates,
+      startTime: updates.startTime ? new Date(updates.startTime) : undefined,
+      endTime: updates.endTime ? new Date(updates.endTime) : undefined
+    },
+    include: { estimate: true, crewMembers: true, photos: true }
+  })
+
+  return NextResponse.json(assignment)
+}
+import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
+
+export async function GET() {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const crew = await prisma.crewMember.findMany({
+    where: { userId: session.user.id, isActive: true },
+    orderBy: { name: 'asc' }
+  })
+
+  return NextResponse.json(crew)
+}
+
+export async function POST(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const data = await req.json()
+
+  const member = await prisma.crewMember.create({
+    data: {
+      userId: session.user.id,
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      role: data.role,
+      hourlyRate: data.hourlyRate,
+      color: data.color
+    }
+  })
+
+  return NextResponse.json(member)
+}
+import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
+
+export async function GET() {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const [estimates, leads] = await Promise.all([
+    prisma.estimate.findMany({ where: { userId: session.user.id } }),
+    prisma.lead.findMany({ where: { userId: session.user.id } })
+  ])
+
+  const pipelineValue = estimates.reduce((sum, e) => sum + e.total, 0)
+  const activeLeads = leads.filter(l => l.status === 'NEW' || l.status === 'CONTACTED').length
+  const estimatesSent = estimates.filter(e => e.status === 'SENT').length
+  const approvedEstimates = estimates.filter(e => e.status === 'APPROVED').length
+  const conversionRate = estimatesSent > 0 ? Math.round((approvedEstimates / estimatesSent) * 100) : 0
+
+  return NextResponse.json({
+    pipelineValue,
+    activeLeads,
+    estimatesSent,
+    conversionRate,
+    leadsNeedingAttention: leads.filter(l => l.status === 'NEW').length,
+    recentActivity: [
+      ...estimates.slice(0, 3).map(e => ({
+        id: e.id,
+        type: 'estimate_sent',
+        description: `Estimate sent to ${e.clientName}`,
+        timeAgo: '2 hours ago',
+        amount: e.total
+      })),
+      ...leads.slice(0, 2).map(l => ({
+        id: l.id,
+        type: 'lead_created',
+        description: `New lead: ${l.name}`,
+        timeAgo: '5 hours ago'
+      }))
+    ]
+  })
+}
+import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+
+export async function POST(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const formData = await req.formData()
+  const file = formData.get('file') as File
+  const assignmentId = formData.get('assignmentId') as string
+  const type = formData.get('type') as string
+
+  if (!file) return NextResponse.json({ error: 'No file' }, { status: 400 })
+
+  const mockUrl = `https://picsum.photos/seed/${Date.now()}/800/600`
+
+  return NextResponse.json({
+    url: mockUrl,
+    thumbnailUrl: mockUrl.replace('/800/600', '/400/300'),
+    assignmentId,
+    type
+  })
+}
+export const metadata = {
+  title: 'Field Service Pro',
+  description: 'AI-Powered Field Service Management',
+}
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  )
+}
+import { Providers } from '@/components/Providers'
+import { Navigation } from '@/components/Navigation'
+
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Providers>
+      <Navigation />
+      <main className="pt-16 lg:pt-0 lg:pl-64 min-h-screen bg-black text-white">
+        {children}
+      </main>
+    </Providers>
+  )
+}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+  }
+  body {
+    @apply bg-black text-white min-h-screen;
+    background: linear-gradient(to bottom, #000000, #022c22);
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-green-400 to-orange-500 bg-clip-text text-transparent;
+  }
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+  }
+}
+'use client'
+
+import { SessionProvider } from 'next-auth/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useState } from 'react'
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient())
+  return (
+    <SessionProvider>
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    </SessionProvider>
+  )
+}
+'use client'
+
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { useSession, signOut } from 'next-auth/react'
+import { 
+  LayoutDashboard, Satellite, FileText, Users, 
+  Calendar, Settings, LogOut, Menu, X 
+} from 'lucide-react'
+import { useState } from 'react'
+
+const navItems = [
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/ai', label: 'AI Pricing', icon: Satellite },
+  { href: '/estimates', label: 'Estimates', icon: FileText },
+  { href: '/leads', label: 'Leads', icon: Users },
+  { href: '/schedule', label: 'Schedule', icon: Calendar },
+  { href: '/settings', label: 'Settings', icon: Settings },
+]
+
+export function Navigation() {
+  const { data: session } = useSession()
+  const pathname = usePathname()
+  const [mobileOpen, setMobileOpen] = useState(false)
+
+  if (!session) return null
+
+  return (
+    <>
+      <header className="lg:hidden fixed top-0 left-0 right-0 z-50 glass border-b-0">
+        <div className="flex items-center justify-between p-4">
+          <Link href="/dashboard" className="flex items-center gap-2">
+            <span className="text-2xl">🌿</span>
+            <span className="font-bold text-gradient">Field Service Pro</span>
+          </Link>
+          <button onClick={() => setMobileOpen(!mobileOpen)} className="p-2">
+            {mobileOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+        </div>
+      </header>
+
+      {mobileOpen && (
+        <div className="lg:hidden fixed inset-0 z-40 bg-black/95 pt-16">
+          <nav className="p-4 space-y-2">
+            {navItems.map((item) => {
+              const Icon = item.icon
+              const isActive = pathname === item.href
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={`flex items-center gap-4 p-4 rounded-xl ${
+                    isActive ? 'bg-gradient-to-r from-green-500/20 to-orange-500/20 border border-green-500/30' : 'hover:bg-white/5'
+                  }`}
+                >
+                  <Icon size={24} className={isActive ? 'text-green-400' : 'text-gray-400'} />
+                  <span className={isActive ? 'font-bold' : ''}>{item.label}</span>
+                </Link>
+              )
+            })}
+            <button onClick={() => signOut()} className="w-full flex items-center gap-4 p-4 text-red-400">
+              <LogOut size={24} /> Sign Out
+            </button>
+          </nav>
+        </div>
+      )}
+
+      <aside className="hidden lg:flex fixed left-0 top-0 bottom-0 w-64 glass border-r flex-col">
+        <div className="p-6 border-b border-white/10">
+          <Link href="/dashboard" className="flex items-center gap-3">
+            <span className="text-3xl">🌿</span>
+            <div>
+              <span className="font-bold text-xl text-gradient block">Field Service Pro</span>
+              <span className="text-xs text-gray-500">AI-Powered</span>
+            </div>
+          </Link>
+        </div>
+
+        <nav className="flex-1 p-4 space-y-1">
+          {navItems.map((item) => {
+            const Icon = item.icon
+            const isActive = pathname === item.href
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
+                  isActive 
+                    ? 'bg-gradient-to-r from-green-500 to-orange-500 text-black font-bold' 
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <Icon size={20} />
+                {item.label}
+              </Link>
+            )
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-white/10">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-r from-green-500 to-orange-500 flex items-center justify-center text-black font-bold">
+              {session.user?.name?.[0] || session.user?.email?.[0]}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-sm truncate">{session.user?.name || session.user?.email}</p>
+            </div>
+          </div>
+          <button onClick={() => signOut()} className="w-full mt-3 flex items-center gap-3 px-4 py-2 text-red-400 hover:bg-red-500/10 rounded-lg">
+            <LogOut size={18} /> Sign Out
+          </button>
+        </div>
+      </aside>
+    </>
+  )
+}
+'use client'
+
+import { useSession } from 'next-auth/react'
+import { useQuery } from '@tanstack/react-query'
+import Link from 'next/link'
+import { TrendingUp, Users, FileText, DollarSign } from 'lucide-react'
+
+export default function DashboardPage() {
+  const { data: session } = useSession()
+  const { data, isLoading } = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard')
+      return res.json()
+    }
+  })
+
+  if (isLoading) return <div className="p-6">Loading...</div>
+
+  const stats = [
+    { title: 'Pipeline Value', value: `$${data?.pipelineValue?.toLocaleString() || 0}`, icon: DollarSign, color: 'green' },
+    { title: 'Active Leads', value: data?.activeLeads || 0, icon: Users, color: 'blue' },
+    { title: 'Estimates Sent', value: data?.estimatesSent || 0, icon: FileText, color: 'orange' },
+    { title: 'Conversion Rate', value: `${data?.conversionRate || 0}%`, icon: TrendingUp, color: 'emerald' },
+  ]
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold mb-2">Welcome back, {session?.user?.name?.split(' ')[0] || 'there'}! 👋</h1>
+        <p className="text-gray-400">Here's what's happening today.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {stats.map((stat) => {
+          const Icon = stat.icon
+          return (
+            <div key={stat.title} className="glass rounded-xl p-6">
+              <div className={`p-3 rounded-lg bg-${stat.color}-500/20 w-fit mb-4`}>
+                <Icon className={`text-${stat.color}-400`} size={24} />
+              </div>
+              <p className="text-gray-400 text-sm">{stat.title}</p>
+              <p className="text-2xl font-bold">{stat.value}</p>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Link href="/ai" className="glass rounded-xl p-6 hover:border-green-500/50 transition">
+          <div className="w-16 h-16 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center text-3xl mb-4">
+            🛰️
+          </div>
+          <h3 className="font-bold text-lg">Analyze New Property</h3>
+          <p className="text-gray-400 text-sm">AI-powered pricing in 30 seconds</p>
+        </Link>
+
+        <Link href="/leads" className="glass rounded-xl p-6 hover:border-orange-500/50 transition">
+          <div className="w-16 h-16 rounded-xl bg-gradient-to-r from-orange-500 to-red-500 flex items-center justify-center text-3xl mb-4">
+            👋
+          </div>
+          <h3 className="font-bold text-lg">Follow Up on Leads</h3>
+          <p className="text-gray-400 text-sm">{data?.leadsNeedingAttention || 0} leads need attention</p>
+        </Link>
+      </div>
+    </div>
+  )
+}
+'use client'
+
+import { useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import { motion, AnimatePresence } from 'framer-motion'
+import { MapPin, Loader2, Check, ArrowRight } from 'lucide-react'
+
+export default function AIPricingPage() {
+  const [step, setStep] = useState<'input' | 'analyzing' | 'client' | 'success'>('input')
+  const [address, setAddress] = useState('')
+  const [aiResult, setAiResult] = useState<any>(null)
+  const [clientInfo, setClientInfo] = useState({ name: '', email: '', phone: '' })
+
+  const analyzeMutation = useMutation({
+    mutationFn: async (addr: string) => {
+      const res = await fetch('/api/ai/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: addr })
+      })
+      return res.json()
+    },
+    onSuccess: (data) => {
+      setAiResult(data)
+      setStep('client')
+    }
+  })
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...clientInfo, address: aiResult?.address, aiAnalysis: aiResult })
+      })
+      return res.json()
+    },
+    onSuccess: () => setStep('success')
+  })
+
+  return (
+    <div className="p-6 max-w-2xl mx-auto min-h-[calc(100vh-4rem)] flex items-center">
+      <AnimatePresence mode="wait">
+        {step === 'input' && (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="w-full">
+            <div className="text-center mb-8">
+              <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center text-5xl">
+                🛰️
+              </div>
+              <h1 className="text-3xl font-bold mb-2">AI Property Analysis</h1>
+              <p className="text-gray-400">Enter an address and our AI will analyze satellite imagery.</p>
+            </div>
+
+            <div className="glass rounded-xl p-6">
+              <div className="relative">
+                <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                <input
+                  type="text"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && analyzeMutation.mutate(address)}
+                  placeholder="1234 Oak Street, Springfield, IL"
+                  className="w-full bg-black/30 border border-white/20 rounded-lg pl-12 pr-4 py-4 text-lg focus:outline-none focus:border-green-500"
+                />
+              </div>
+              <button
+                onClick={() => analyzeMutation.mutate(address)}
+                disabled={!address.trim() || analyzeMutation.isPending}
+                className="w-full mt-4 bg-gradient-to-r from-green-500 to-orange-500 text-black font-bold py-4 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {analyzeMutation.isPending ? <Loader2 className="animate-spin" /> : <><>Analyze Property</> <ArrowRight /></>}
+              </button>
+            </div>
+          </motion.div>
+        )}
+
+        {step === 'analyzing' && (
+          <div className="w-full text-center">
+            <div className="w-32 h-32 mx-auto mb-8 relative">
+              <div className="absolute inset-0 rounded-full border-4 border-green-500/20" />
+              <div className="absolute inset-0 rounded-full border-4 border-green-500 border-t-transparent animate-spin" />
+              <span className="absolute inset-0 flex items-center justify-center text-4xl">🛰️</span>
+            </div>
+            <h2 className="text-2xl font-bold">Analyzing Property...</h2>
+          </div>
+        )}
+
+        {step === 'client' && aiResult && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full glass rounded-xl p-6">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center text-2xl">🎯</div>
+              <div>
+                <h3 className="text-xl font-bold">Analysis Complete!</h3>
+                <p className="text-gray-400">{aiResult.address}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="bg-black/30 rounded-lg p-3">
+                <p className="text-gray-500 text-xs">Lot Size</p>
+                <p className="font-bold">{(aiResult.lotSizeSqFt / 43560).toFixed(2)} acres</p>
+              </div>
+              <div className="bg-black/30 rounded-lg p-3">
+                <p className="text-gray-500 text-xs">Service Area</p>
+                <p className="font-bold">{aiResult.lawnAreaSqFt.toLocaleString()} sq ft</p>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-r from-green-500/20 to-orange-500/20 rounded-lg p-6 text-center border border-green-500/30 mb-6">
+              <p className="text-gray-400 mb-2">AI Suggested Price</p>
+              <p className="text-5xl font-bold text-gradient">${aiResult.suggestedPrice}</p>
+            </div>
+
+            <h4 className="font-bold mb-4">Who's this for?</h4>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={clientInfo.name}
+                onChange={(e) => setClientInfo({...clientInfo, name: e.target.value})}
+                placeholder="Client Name *"
+                className="w-full bg-black/30 border border-white/20 rounded-lg px-4 py-3"
+              />
+              <input
+                type="email"
+                value={clientInfo.email}
+                onChange={(e) => setClientInfo({...clientInfo, email: e.target.value})}
+                placeholder="Email"
+                className="w-full bg-black/30 border border-white/20 rounded-lg px-4 py-3"
+              />
+            </div>
+
+            <button
+              onClick={() => createMutation.mutate()}
+              disabled={!clientInfo.name.trim() || createMutation.isPending}
+              className="w-full mt-6 bg-gradient-to-r from-green-500 to-orange-500 text-black font-bold py-4 rounded-lg disabled:opacity-50"
+            >
+              {createMutation.isPending ? 'Creating...' : 'Create Lead + Estimate'}
+            </button>
+          </motion.div>
+        )}
+
+        {step === 'success' && (
+          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="w-full text-center">
+            <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center">
+              <Check className="text-black" size={48} />
+            </div>
+            <h3 className="text-2xl font-bold mb-2">All Set!</h3>
+            <div className="flex gap-4 justify-center">
+              <a href="/estimates" className="bg-gradient-to-r from-green-500 to-orange-500 text-black font-bold px-6 py-3 rounded-lg">View Estimate</a>
+              <a href="/leads" className="bg-white/10 px-6 py-3 rounded-lg">View Lead</a>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+'use client'
+
+import { useQuery } from '@tanstack/react-query'
+import Link from 'next/link'
+
+export default function LeadsPage() {
+  const { data: leads = [] } = useQuery({
+    queryKey: ['leads'],
+    queryFn: async () => {
+      const res = await fetch('/api/leads')
+      return res.json()
+    }
+  })
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <h2 className="text-3xl font-bold mb-6">Leads</h2>
+
+      <div className="glass rounded-xl overflow-hidden">
+        <table className="w-full">
+          <thead className="bg-white/5 text-left text-sm text-gray-400">
+            <tr>
+              <th className="p-4">Lead</th>
+              <th className="p-4">Source</th>
+              <th className="p-4">Status</th>
+              <th className="p-4">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {leads.map((lead: any) => (
+              <tr key={lead.id} className="border-t border-white/5 hover:bg-white/5">
+                <td className="p-4">
+                  <p className="font-medium">{lead.name}</p>
+                  <p className="text-xs text-gray-500">{lead.address}</p>
+                </td>
+                <td className="p-4 text-sm">{lead.source}</td>
+                <td className="p-4">
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                    lead.status === 'NEW' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'
+                  }`}>
+                    {lead.status}
+                  </span>
+                </td>
+                <td className="p-4">
+                  <Link href={`/estimates?lead=${lead.id}`} className="text-sm bg-white/10 px-4 py-2 rounded-lg hover:bg-white/20">
+                    Create Estimate
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+'use client'
+
+import { useQuery } from '@tanstack/react-query'
+
+export default function EstimatesPage() {
+  const { data: estimates = [] } = useQuery({
+    queryKey: ['estimates'],
+    queryFn: async () => {
+      const res = await fetch('/api/estimates')
+      return res.json()
+    }
+  })
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <h2 className="text-3xl font-bold mb-6">Estimates</h2>
+
+      <div className="glass rounded-xl overflow-hidden">
+        <table className="w-full">
+          <thead className="bg-white/5 text-left text-sm text-gray-400">
+            <tr>
+              <th className="p-4">Client</th>
+              <th className="p-4">Total</th>
+              <th className="p-4">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {estimates.map((estimate: any) => (
+              <tr key={estimate.id} className="border-t border-white/5 hover:bg-white/5">
+                <td className="p-4">
+                  <p className="font-medium">{estimate.clientName}</p>
+                  <p className="text-xs text-gray-500">{estimate.address}</p>
+                </td>
+                <td className="p-4 font-mono">${estimate.total}</td>
+                <td className="p-4">
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                    estimate.status === 'SENT' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                  }`}>
+                    {estimate.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+'use client'
+
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, parseISO } from 'date-fns'
+
+export default function SchedulePage() {
+  const [currentWeek] = useState(new Date())
+  const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 })
+  const weekEnd = endOfWeek(currentWeek, { weekStartsOn: 1 })
+  const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd })
+
+  const { data: assignments = [] } = useQuery({
+    queryKey: ['assignments'],
+    queryFn: async () => {
+      const res = await fetch(`/api/assignments?start=${weekStart.toISOString()}&end=${weekEnd.toISOString()}`)
+      return res.json()
+    }
+  })
+
+  return (
+    <div className="p-6">
+      <h2 className="text-3xl font-bold mb-6">Crew Schedule</h2>
+      <div className="grid grid-cols-7 gap-2">
+        {weekDays.map((day, i) => {
+          const dayAssignments = assignments.filter((a: any) => isSameDay(parseISO(a.scheduledDate), day))
+          return (
+            <div key={i} className="glass rounded-xl p-3 min-h-[200px]">
+              <p className="text-center text-sm text-gray-400">{format(day, 'EEE')}</p>
+              <p className="text-center font-bold">{format(day, 'd')}</p>
+              {dayAssignments.map((a: any) => (
+                <div key={a.id} className="mt-2 p-2 bg-white/5 rounded text-xs">
+                  <p className="font-medium">{a.estimate.clientName}</p>
+                  <p className="text-gray-500">{a.status}</p>
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
