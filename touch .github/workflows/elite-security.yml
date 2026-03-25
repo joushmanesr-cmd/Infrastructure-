@@ -461,3 +461,8 @@ Signed container
 Policy validation
   ↓
 Verified deploy
+git add .
+git commit -m "Elite+ architecture"
+git push origin main
+Actions →
+Elite+ CI/CD Security Pipeline
